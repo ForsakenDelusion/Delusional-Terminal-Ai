@@ -1,0 +1,203 @@
+#!/bin/bash
+# File: ai
+# Usage:
+#   ai "question"               # Ask a question
+#   ai --setkey [API_KEY]       # Set or clear API key (empty to clear)
+#   ai --memory on/off          # Manage memory feature
+#   ai --clean                  # Clean conversation history
+#   ai --status                 # Show current status
+#   ai --help                   # Display help info
+
+# Configuration settings
+CONFIG_DIR="${HOME}/.config/ai_chat"
+HISTORY_FILE="${CONFIG_DIR}/dialog_history.json"
+CONFIG_FILE="${CONFIG_DIR}/settings.cfg"
+MAX_HISTORY=6
+MAX_DAYS=3
+
+# Initialize configuration directory
+mkdir -p "$CONFIG_DIR"
+[ ! -f "$CONFIG_FILE" ] && touch "$CONFIG_FILE"
+chmod 600 "$CONFIG_FILE"
+
+# Color definitions
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
+# Help information
+print_help() {
+    echo -e "${YELLOW}AI Terminal Assistant Usage:${NC}"
+    echo "  ai \"your question\"         Ask a question"
+    echo "  ai -key [API_KEY]         Set or clear the API key (empty to clear)"
+    echo "    or: ai -k [API_KEY]"
+    echo "  ai -memory on/off            Enable/disable memory feature"
+    echo "    or: ai -m on/off"
+    echo "  ai -clean                    Clean conversation history"
+    echo "    or: ai -c"
+    echo "  ai -status                   Display current status"
+    echo "    or: ai -s"
+    echo "  ai -help                     Show this help information"
+    echo "    or: ai -h"
+    echo -e "\n${YELLOW}Example:${NC}"
+    echo "  ai \"Implement quicksort in Python\""
+    echo "  ai -memory off \"Test a single question\""
+}
+
+# Read configuration
+read_config() {
+    api_key=$(grep '^api_key=' "$CONFIG_FILE" | cut -d= -f2-)
+    memory_enabled=$(grep '^memory_enabled=' "$CONFIG_FILE" | cut -d= -f2-)
+    [ -z "$memory_enabled" ] && memory_enabled="on"
+}
+
+# Update a config key while preserving others
+update_config() {
+    local key="$1"
+    local value="$2"
+    # Remove old key line
+    local new_cfg
+    new_cfg=$(grep -v "^${key}=" "$CONFIG_FILE")
+    [ -n "$value" ] && new_cfg="${new_cfg}"$'\n'"${key}=${value}"
+    echo "$new_cfg" > "$CONFIG_FILE"
+    chmod 600 "$CONFIG_FILE"
+}
+
+# Argument handling
+handle_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -key|-k)
+                shift
+                local key_arg="$1"
+                update_config "api_key" "$key_arg"
+                if [ -n "$key_arg" ]; then
+                    echo -e "${GREEN}✓ API key stored securely${NC}"
+                else
+                    echo -e "${GREEN}✓ API key cleared${NC}"
+                fi
+                exit 0
+                ;;
+            -memory|-m)
+                shift
+                case "$1" in
+                    on|off)
+                        update_config "memory_enabled" "$1"
+                        [ "$1" = "off" ] && rm -f "$HISTORY_FILE"
+                        echo -e "${GREEN}✓ Memory feature turned ${1}${NC}"
+                        exit 0
+                        ;;
+                    *)
+                        echo -e "${RED}Error: Invalid parameter, please use on/off${NC}"
+                        print_help
+                        exit 1
+                        ;;
+                esac
+                ;;
+            -clean|-c)
+                rm -f "$HISTORY_FILE"
+                echo -e "${GREEN}✓ Conversation history cleaned${NC}"
+                exit 0
+                ;;
+            -status|-s)
+                read_config
+                echo -e "Current status:"
+                echo -e "• Memory feature: ${YELLOW}$memory_enabled${NC}"
+                exit 0
+                ;;
+            -help|-h)
+                print_help
+                exit 0
+                ;;
+            -*)
+                echo -e "${RED}Error: Unknown option $1${NC}"
+                print_help
+                exit 1
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+}
+
+# Main program
+main() {
+    read_config
+
+    # If no argument is provided, display help
+    if [ $# -eq 0 ]; then
+        print_help
+        exit 0
+    fi
+
+    # Check API key
+    if [ -z "$api_key" ]; then
+        echo -e "${RED}Error: API key not found${NC}"
+        echo -e "Set the API key with the command:"
+        echo -e "  ai -key your_API_key_here"
+        exit 1
+    fi
+
+    # Automatically clean old history files
+    find "$CONFIG_DIR" -name "*.json" -mtime +$MAX_DAYS -delete 2>/dev/null
+
+    # Process the question
+    local question="$1"
+    
+    # Memory feature handling
+    if [ "$memory_enabled" = "on" ]; then
+        [ ! -f "$HISTORY_FILE" ] && echo '[{"role": "system", "content": "You are a helpful assistant."}]' > "$HISTORY_FILE"
+        
+        # Append user question to history
+        updated_history=$(jq --arg input "$question" '. += [{"role": "user", "content": $input}]' "$HISTORY_FILE")
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Error: Failed to update conversation history${NC}"
+            exit 1
+        fi
+        echo "$updated_history" > "$HISTORY_FILE"
+
+        # Build request JSON using history
+        REQUEST_JSON=$(jq -n \
+            --arg model "deepseek-chat" \
+            --slurpfile history "$HISTORY_FILE" \
+            '{model: $model, messages: $history[0], stream: false}')
+    else
+        REQUEST_JSON=$(jq -n \
+            --arg input "$question" \
+            '{ model: "deepseek-chat", messages: [ {"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": $input} ], stream: false }')
+    fi
+
+    # Send the request
+    response=$(curl -s https://api.deepseek.com/chat/completions \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $api_key" \
+        -d "$REQUEST_JSON")
+
+    # Process the response
+    if ! echo "$response" | jq -e '.choices[].message.content' >/dev/null 2>&1; then
+        echo -e "${RED}Request failed:"
+        echo "$response" | jq -r .error.message
+        exit 1
+    fi
+
+    reply=$(echo "$response" | jq -r '.choices[0].message.content')
+    echo -e "${GREEN}AI:${NC} $reply"
+
+    # Save reply if memory feature is enabled
+    if [ "$memory_enabled" = "on" ]; then
+        if response_msg=$(echo "$response" | jq '.choices[0].message'); then
+            updated_history=$(jq --argjson msg "$response_msg" '. += [$msg]' "$HISTORY_FILE")
+            trimmed=$(echo "$updated_history" | jq ".[-${MAX_HISTORY}:]")
+            echo "$trimmed" > "$HISTORY_FILE"
+        else
+            echo -e "${YELLOW}Warning: Failed to save conversation history${NC}"
+        fi
+    fi
+}
+
+# Start the program
+handle_arguments "$@"
+main "$@"
