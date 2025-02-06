@@ -47,6 +47,15 @@ echo "Installing 'ai' into $INSTALL_DIR..."
 sudo cp "$SCRIPT_SOURCE" "$TARGET_FILE"
 sudo chmod 755 "$TARGET_FILE"
 
+# Initialize configuration directory and files
+CONFIG_DIR="${HOME}/.config/delusional-terminal-ai"
+HISTORY_FILE="${CONFIG_DIR}/dialog_history.json"
+mkdir -p "$CONFIG_DIR"
+if [ ! -f "$HISTORY_FILE" ]; then
+    echo '[{"role": "system", "content": "You are a helpful assistant."}]' > "$HISTORY_FILE"
+    chmod 600 "$HISTORY_FILE"
+fi
+
 # Record installation info
 sudo mkdir -p "$(dirname "$INSTALLED_CMD_FILE")"
 echo "$CUSTOM_CMD" | sudo tee "$INSTALLED_CMD_FILE" >/dev/null
