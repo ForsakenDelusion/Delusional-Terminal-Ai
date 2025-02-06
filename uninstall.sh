@@ -38,7 +38,7 @@ if [ -f "$INSTALLED_CMD_FILE" ]; then
 fi
 
 # Ask about config directory
-CONFIG_DIR="${HOME}/.config/ai_chat"
+CONFIG_DIR="${HOME}/.config/delusional-terminal-ai"
 read -p "Do you want to remove the configuration directory ($CONFIG_DIR)? [y/N]: " del_config
 if [[ "$del_config" =~ ^[Yy]$ ]]; then
     rm -rf "$CONFIG_DIR"
