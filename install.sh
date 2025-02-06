@@ -1,6 +1,8 @@
 #!/bin/bash
-# Installation script for AI Terminal Assistant
-# This script checks that dependencies (jq, curl) are installed and copies the 'ai' script to /usr/local/bin
+
+# Version info
+VERSION="1.0.0"
+echo "Installing Delusional Terminal AI v${VERSION}..."
 
 # Check dependencies manually; do not auto-install
 for dep in jq curl; do
@@ -10,24 +12,24 @@ for dep in jq curl; do
     fi
 done
 
-# 新增：检查是否已安装，避免重复安装（判断标记文件）
+# Check if already installed
 INSTALLED_CMD_FILE="/usr/local/share/ai_terminal_installed_cmd"
 if [ -f "$INSTALLED_CMD_FILE" ]; then
     EXISTING_CMD=$(cat "$INSTALLED_CMD_FILE")
     if [ -f "/usr/local/delusional-terminal-ai/delusional-ai" ]; then
-        echo "Error: 已安装 alias 为 '$EXISTING_CMD'。如需重新安装，请先卸载。"
+        echo "Error: Already installed with alias '$EXISTING_CMD'. Please uninstall first."
         exit 1
     fi
 fi
 
-# 新增：判断是否传入自定义 alias 名称参数，否则提示输入
+# Get custom alias name
 CUSTOM_CMD="$1"
 if [ -z "$CUSTOM_CMD" ]; then
-    read -p "请输入安装后的 alias 名称 [默认: ai]: " CUSTOM_CMD
+    read -p "Enter alias name for the command [default: ai]: " CUSTOM_CMD
     [ -z "$CUSTOM_CMD" ] && CUSTOM_CMD="ai"
 fi
 
-# 将 ai 脚本复制到固定安装目录
+# 固定安装目录和文件
 INSTALL_DIR="/usr/local/delusional-terminal-ai"
 TARGET_FILE="$INSTALL_DIR/delusional-ai"
 SCRIPT_SOURCE="$(cd "$(dirname "$0")" && pwd)/delusional-ai"
@@ -37,17 +39,19 @@ if [ ! -f "$SCRIPT_SOURCE" ]; then
     exit 1
 fi
 
-echo "Installing 'ai' into $INSTALL_DIR..."
+# Set directory permissions and copy files
+echo "Setting up installation directory..."
 sudo mkdir -p "$INSTALL_DIR"
+sudo chmod 755 "$INSTALL_DIR"
+echo "Installing 'ai' into $INSTALL_DIR..."
 sudo cp "$SCRIPT_SOURCE" "$TARGET_FILE"
-sudo chmod +x "$TARGET_FILE"
+sudo chmod 755 "$TARGET_FILE"
 
-# 新增：记录安装时的 alias 名称到标记文件
+# Record installation info
 sudo mkdir -p "$(dirname "$INSTALLED_CMD_FILE")"
 echo "$CUSTOM_CMD" | sudo tee "$INSTALLED_CMD_FILE" >/dev/null
 
-# 删除自动添加 alias 到 shell 配置文件的代码块
-# 提示用户手动添加 alias：
-echo "安装完成。请手动将以下 alias 添加到您的 shell 配置文件（如 ~/.zshrc 或 ~/.bashrc）："
+# Prompt user to configure alias
+echo "Installation complete. Please add the following alias to your shell config file (~/.zshrc or ~/.bashrc):"
 echo "alias $CUSTOM_CMD='/usr/local/delusional-terminal-ai/delusional-ai'"
-echo "添加后请重启 shell 或执行: source 您的配置文件"
+echo "Then restart your shell or run: source <your-shell-config-file>"

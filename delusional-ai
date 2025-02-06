@@ -9,10 +9,10 @@
 #   ai --help                   # Display help info
 
 # Configuration settings
-CONFIG_DIR="${HOME}/.config/ai_chat"
+CONFIG_DIR="${HOME}/.config/delusional-terminal-ai"
 HISTORY_FILE="${CONFIG_DIR}/dialog_history.json"
 CONFIG_FILE="${CONFIG_DIR}/settings.cfg"
-MAX_HISTORY=6
+DEFAULT_MAX_HISTORY=20
 MAX_DAYS=3
 
 # Initialize configuration directory
@@ -26,22 +26,35 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
+# 添加依赖检查函数
+check_dependencies() {
+    for cmd in jq curl; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            echo -e "${RED}Error: Required command '$cmd' not found${NC}"
+            echo "Please install $cmd and try again"
+            exit 1
+        fi
+    done
+}
+
 # Help information
 print_help() {
     echo -e "${YELLOW}AI Terminal Assistant Usage:${NC}"
     echo "  ai \"your question\"         Ask a question"
     echo "  ai -key [API_KEY]         Set or clear the API key (empty to clear)"
     echo "    or: ai -k [API_KEY]"
-    echo "  ai -memory on/off            Enable/disable memory feature"
+    echo "  ai -memory on/off         Enable/disable memory feature"
     echo "    or: ai -m on/off"
-    echo "  ai -clean                    Clean conversation history"
+    echo "  ai -clean                 Clean conversation history"
     echo "    or: ai -c"
-    echo "  ai -status                   Display current status"
+    echo "  ai -status                Display current status"
     echo "    or: ai -s"
-    echo "  ai -help                     Show this help information"
+    echo "  ai -help                  Show this help information"
     echo "    or: ai -h"
+    echo "  ai -max [NUMBER]           Set maximum conversation rounds"
+    echo "    or: ai -x [NUMBER]"
     echo -e "\n${YELLOW}Example:${NC}"
-    echo "  ai \"Implement quicksort in Python\""
+    echo "  ai \"How to implement quicksort in Python?\""
     echo "  ai -memory off \"Test a single question\""
 }
 
@@ -49,7 +62,9 @@ print_help() {
 read_config() {
     api_key=$(grep '^api_key=' "$CONFIG_FILE" | cut -d= -f2-)
     memory_enabled=$(grep '^memory_enabled=' "$CONFIG_FILE" | cut -d= -f2-)
+    max_history=$(grep '^max_history=' "$CONFIG_FILE" | cut -d= -f2-)
     [ -z "$memory_enabled" ] && memory_enabled="on"
+    [ -z "$max_history" ] && max_history="$DEFAULT_MAX_HISTORY"
 }
 
 # Update a config key while preserving others
@@ -100,10 +115,22 @@ handle_arguments() {
                 echo -e "${GREEN}✓ Conversation history cleaned${NC}"
                 exit 0
                 ;;
+            -max|-x)
+                shift
+                if [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -gt 0 ]; then
+                    update_config "max_history" "$1"
+                    echo -e "${GREEN}✓ Maximum conversation rounds set to $1${NC}"
+                    exit 0
+                else
+                    echo -e "${RED}Error: Please provide a valid positive number${NC}"
+                    exit 1
+                fi
+                ;;
             -status|-s)
                 read_config
                 echo -e "Current status:"
                 echo -e "• Memory feature: ${YELLOW}$memory_enabled${NC}"
+                echo -e "• Max history: ${YELLOW}$max_history${NC}"
                 exit 0
                 ;;
             -help|-h)
@@ -125,6 +152,8 @@ handle_arguments() {
 
 # Main program
 main() {
+    # 添加依赖检查
+    check_dependencies
     read_config
 
     # If no argument is provided, display help
@@ -147,9 +176,16 @@ main() {
     # Process the question
     local question="$1"
     
-    # Memory feature handling
+    # 添加进度提示
+    echo -e "${YELLOW}Thinking...${NC}" >&2
+
+    # Memory feature handling with improved error checking
     if [ "$memory_enabled" = "on" ]; then
-        [ ! -f "$HISTORY_FILE" ] && echo '[{"role": "system", "content": "You are a helpful assistant."}]' > "$HISTORY_FILE"
+        if ! jq . "$HISTORY_FILE" >/dev/null 2>&1; then
+            echo -e "${RED}Error: Invalid history file format${NC}"
+            rm -f "$HISTORY_FILE"
+            echo '[{"role": "system", "content": "You are a helpful assistant."}]' > "$HISTORY_FILE"
+        fi
         
         # Append user question to history
         updated_history=$(jq --arg input "$question" '. += [{"role": "user", "content": $input}]' "$HISTORY_FILE")
@@ -170,11 +206,25 @@ main() {
             '{ model: "deepseek-chat", messages: [ {"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": $input} ], stream: false }')
     fi
 
-    # Send the request
-    response=$(curl -s https://api.deepseek.com/chat/completions \
+    # 添加超时设置的 curl 请求
+    response=$(curl -s \
+        --connect-timeout 10 \
+        --max-time 30 \
+        --retry 2 \
+        --retry-delay 3 \
+        https://api.deepseek.com/chat/completions \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $api_key" \
         -d "$REQUEST_JSON")
+
+    # 改进的错误处理
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Error: Network request failed${NC}"
+        exit 1
+    fi
+
+    # 清除进度提示（通过将光标移动到上一行并清除）
+    echo -en "\033[1A\033[K"
 
     # Process the response
     if ! echo "$response" | jq -e '.choices[].message.content' >/dev/null 2>&1; then
@@ -190,7 +240,7 @@ main() {
     if [ "$memory_enabled" = "on" ]; then
         if response_msg=$(echo "$response" | jq '.choices[0].message'); then
             updated_history=$(jq --argjson msg "$response_msg" '. += [$msg]' "$HISTORY_FILE")
-            trimmed=$(echo "$updated_history" | jq ".[-${MAX_HISTORY}:]")
+            trimmed=$(echo "$updated_history" | jq ".[-${max_history}:]")
             echo "$trimmed" > "$HISTORY_FILE"
         else
             echo -e "${YELLOW}Warning: Failed to save conversation history${NC}"
