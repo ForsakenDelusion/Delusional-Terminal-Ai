@@ -42,7 +42,7 @@ ai -key YOUR_API_KEY
 ### 基本用法
 
 ```bash
-ai "你的问题"                # 询问问题
+ai 你的问题                  # 询问问题
 ```
 
 ### 配置选项
@@ -70,7 +70,7 @@ ai -help                   # 显示帮助信息
 
 ```bash
 # 询问编程问题
-ai "如何使用 Python 实现快速排序？"
+ai 如何使用 Python 实现快速排序？
 
 # 开启记忆功能
 ai -memory on
